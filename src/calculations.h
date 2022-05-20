@@ -25,18 +25,13 @@ float calculate_vpd(float temp, float humidity){
   return calculate_svp(temp)-calculate_avp(temp, humidity);
 }
 
-double batt_lvl(int x){
+double batt_lvl(float x){
   return  constrain(97.34482 + (10.20562 - 97.34482)/(1 + pow(pow((x/3.590438),42.12697),0.8958739)),0,100);
 }
 float batt_voltage(int adc){
   return float_map(adc, 0,4095,0,6.6) + 0.24;
 }
-float sleep_min(int x){
+float sleep_min(float x){
   //ENTER Battery level as precentage
-  return 2772 - 84.65*x + 0.92477*pow(x,2) - 0.0035756*pow(x,3);
-}
-// vwc calculate precentage from voltage
-float soil_vwc(float voltage){
-  float soil_percent = constrain((((1.0 / voltage) * slope) + intercept) * 100, 0, 100);
-  return soil_percent;
+  return constrain(2772 - 84.65*x + 0.92477*pow(x,2) - 0.0035756*pow(x,3),3,2000);
 }

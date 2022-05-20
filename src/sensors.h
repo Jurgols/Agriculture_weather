@@ -11,22 +11,20 @@ OneWire oneWire(DS18_pin);
 DallasTemperature ds_temp(&oneWire);
 
 
-float soil_voltage(uint8_t pin){
-  int soil_adc = analogRead(pin);
-  float voltage = (soil_adc / 4095.0) * 3.3;
-  return voltage;
+
+void wakeUpAM2320(){
+  am2320.begin();
+  am2320.wakeUp();
+  // esp_sleep_enable_timer_wakeup(2e+6); //2 secoonds
+  // esp_light_sleep_start();
 }
 
 float read_temp(){
-  am2320.begin();
-  am2320.wakeUp();
-  delay(2000);
   am2320.read();
   return am2320.getTemperature();
 }
 float read_hum(){
-  am2320.begin();
-  am2320.wakeUp();
+  am2320.read();
   return am2320.getHumidity();
 }
 
@@ -51,6 +49,12 @@ class SoilMoisture
  //Member object type class
  SimpleKalmanFilter* kalmanObj;
  private:
+  float soil_voltage(uint8_t pin){
+    int soil_adc = analogRead(pin);
+    float voltage = (soil_adc / 4095.0) * 3.3;
+    return voltage;
+  }
+
  float _function(float x, float a, float b){
    return a*exp(b*x);
  }
@@ -83,6 +87,4 @@ void Update(){
   int readRawValue(){
     return rawValue;
   }
-
-
 };

@@ -1,18 +1,21 @@
 #include <Arduino.h>
-#include "hidden.h"
+
 #include <WiFiMulti.h>
 #include <ESPmDNS.h>
 #include "Wire.h"
 #include "time.h"
-#define DS18_pin 25
-#include "sensors.h"
-#include "calculations.h"
 #include <HTTPClient.h> /// FOR ESP32 HTTP FOTA UPDATE ///
 #include <HTTPUpdate.h> /// FOR ESP32 HTTP FOTA UPDATE ///
 //#include <WiFiClient.h> /// FOR ESP32 HTTP FOTA UPDATE ///
 #include <ArduinoOTA.h>
 #include "InfluxDbClient.h"
 #include "InfluxDbCloud.h"
+
+#define DS18_pin 25
+#include "sensors.h"
+#include "calculations.h"
+#include "hidden.h"
+
 unsigned long startmillis =  millis();
 WiFiClient client;
 RTC_DATA_ATTR unsigned long int set_time;
@@ -26,7 +29,7 @@ RTC_DATA_ATTR unsigned long int set_time;
 
 #if DEBUG == 1
 #define debug(x) Serial.print(x)
-#define debugf(x) Serial.printf(x)
+// #define debugf(x) Serial.printf(x)
 #define debugln(x) Serial.println(x)
 #else
 #define debug(x)
@@ -41,7 +44,8 @@ RTC_DATA_ATTR unsigned long int set_time;
 #define INFLUXDB_BUCKET "field_weather"
 //Riga time
 #define TZ_INFO "EET-2EEST,M3.5.0/3,M10.5.0/4"
-
+unsigned long timestamp;
+struct timeval current_time;
 
 WiFiMulti wifiMulti;
 InfluxDBClient influx_client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
@@ -50,7 +54,6 @@ Point sensor("wifi_sensor");
 
 SoilMoisture soilwatch(soil_pin,1,6,5,0.009);
 
-unsigned long timestamp;
 unsigned long getTime() {
   time_t now;
   struct tm timeinfo;
@@ -62,31 +65,36 @@ unsigned long getTime() {
   return now;
 }
 
+void checkForUpdates();
+
 struct tm * myTime;
-struct timeval current_time;
 
 void setup() {
+
+
   
+
   setCpuFrequencyMhz(80);
   WiFi.mode(WIFI_OFF);
   btStop();
   Serial.begin(115200);
+  debugln("Execution");
 
   if(getTime() + 1 > set_time){
-    debugln(set_time);
     Wire.begin(SDA,SCL);
     pinMode(sensors_on, OUTPUT);
     digitalWrite(sensors_on, HIGH);
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
     gpio_hold_en(GPIO_NUM_27);
-    esp_sleep_enable_timer_wakeup(100);
+    esp_sleep_enable_timer_wakeup(1e+5);
     esp_light_sleep_start();
 
     //Filter capacative sensor readings
+    wakeUpAM2320();
     for(int i = 0; i < 30; i++){
       soilwatch.Update();
-      debugln(soilwatch.readRawValue());
-      esp_sleep_enable_timer_wakeup(66);
+      // debugln(soilwatch.readRawValue());
+      esp_sleep_enable_timer_wakeup(67000); //66 ms
       esp_light_sleep_start();
     }
     debug("\n\nExecution time: ");
@@ -99,6 +107,10 @@ void setup() {
     int batt_adc = analogRead(vb_pin); //battery adc
     gpio_hold_dis(GPIO_NUM_27);
     digitalWrite(sensors_on, LOW);
+
+
+
+    
     WiFi.setSleep(false);
     WiFi.disconnect(false);
     WiFi.mode(WIFI_STA);
@@ -115,20 +127,14 @@ void setup() {
     debug("\n\nExecution time: ");
     debugln((millis() - startmillis)/1000);
     if(wifiMulti.run() != WL_CONNECTED) esp_deep_sleep(10 * 6e+7);
+    setCpuFrequencyMhz(160);
 
+
+    timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");
     sensor.addTag("device", DEVICE);
     sensor.addTag("SSID", WiFi.SSID());
     sensor.addTag("location","Ciedras, Māras");
-    timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");
 
-    // Check server connection
-    if (influx_client.validateConnection()) {
-      debug("Connected to InfluxDB: ");
-      debugln(influx_client.getServerUrl());
-    } else {
-      debug("InfluxDB connection failed: ");
-      debugln(influx_client.getLastErrorMessage());
-    }
     sensor.clearFields();
     sensor.addField("rssi", WiFi.RSSI());
     sensor.addField("air_temperature", air_temp);
@@ -140,6 +146,16 @@ void setup() {
     sensor.addField("leaf_delta", air_temp - leaf_temp);
     sensor.addField("battery_lvl", batt_lvl(batt_voltage(batt_adc)));
     sensor.addField("battery_voltage", batt_voltage(batt_adc));
+
+    // Check server connection
+    if (influx_client.validateConnection()) {
+      debug("Connected to InfluxDB: ");
+      debugln(influx_client.getServerUrl());
+    } else {
+      debug("InfluxDB connection failed: ");
+      debugln(influx_client.getLastErrorMessage());
+    }
+    
     debugln("Writing: ");
     debugln(influx_client.pointToLineProtocol(sensor));
     debug("\n\nExecution time: ");
@@ -149,20 +165,21 @@ void setup() {
       debugln("InfluxDB write failed: ");
       debugln(influx_client.getLastErrorMessage());
     }
+    checkForUpdates();
     WiFi.mode(WIFI_OFF);
     btStop();
     debug("Battery adc: ");
     debugln(batt_adc);
     debug("Battery level: ");
+    debugln(batt_voltage(2228));
+    debugln(batt_voltage(2457));
     debugln(batt_lvl(batt_voltage(batt_adc)));
     debug("Sleep minutes: ");
     debugln(sleep_min(batt_lvl(batt_voltage(batt_adc))));
     debug("Sleep seconds: ");
     debugln(sleep_min(batt_lvl(batt_voltage(batt_adc)))*60);
     set_time = getTime() + (sleep_min(batt_lvl(batt_voltage(batt_adc)))*60);
-    
-    
-    
+    esp_deep_sleep(sleep_min(batt_lvl(batt_voltage(batt_adc))) * 6e+7);
   }
 }
 
@@ -173,8 +190,8 @@ void loop() {
 
   debug("\n\nExecution time: ");
   debugln((millis() - startmillis)/1000);
-  debugln("\n\nEntering Deep Sleep for 3 Minutes");
-  esp_deep_sleep(3 * 6e+7);
+  debugln("\n\nEntering Deep Sleep for 1 Minute");
+  esp_deep_sleep(1 * 6e+7);
 }
 
 void checkForUpdates() {
